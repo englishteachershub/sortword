@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Word Reading Challenge - English Teachers Hub</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -43,6 +44,16 @@
     font-size: 15px;
   }
   .mode-btn.active { background: #1B2A4A; color: #C9A227; }
+
+  /* Lesson Title input - added for Assessment Spreadsheet / PDF feature */
+  #lessonTitle {
+    width: 100%;
+    padding: 12px;
+    border: 2px solid #1B2A4A;
+    border-radius: 10px;
+    font-size: 15px;
+    margin-bottom: 10px;
+  }
 
   textarea {
     width: 100%;
@@ -167,6 +178,9 @@
     font-size: 14px;
   }
   .btn-pdf { background: #1B2A4A; color: #C9A227; }
+  .btn-xlsx { background: #1B2A4A; color: #C9A227; border: 2px solid #C9A227; }
+  .btn-print { background: #ffffff; color: #1B2A4A; border: 2px solid #1B2A4A; }
+  .btn-pdf-assessment { background: #C9A227; color: #1B2A4A; }
   .btn-whatsapp { background: #25D366; color: #ffffff; }
   .btn-retry { background: #eeeeee; color: #1B2A4A; }
 
@@ -176,6 +190,37 @@
   #leaderboard td { padding: 8px; text-align: center; border-bottom: 1px solid #eee; font-size: 13px; }
 
   footer { text-align: center; font-size: 12px; color: #999; margin-top: 30px; padding-bottom: 20px; }
+
+  /* ===== Print Assessment Sheet ===== */
+  #printableAssessment { display: none; }
+  @media print {
+    body * { visibility: hidden; }
+    #printableAssessment, #printableAssessment * { visibility: visible; }
+    #printableAssessment {
+      display: block;
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      padding: 10mm;
+      color: #000000;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    @page { size: A4 portrait; margin: 10mm; }
+  }
+  #printableAssessment h2 { text-align: center; margin: 2px 0; font-size: 18px; }
+  #printableAssessment .pa-field { margin: 4px 0; font-size: 13px; }
+  #printableAssessment .pa-field span { display: inline-block; border-bottom: 1px solid #000; min-width: 220px; }
+  #printableAssessment .pa-section {
+    background: #e8e8e8; font-weight: bold; padding: 4px 8px; margin-top: 12px; font-size: 13px;
+  }
+  #printableAssessment table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  #printableAssessment th, #printableAssessment td {
+    border: 1px solid #000; padding: 4px 6px; font-size: 12px; text-align: left;
+  }
+  #printableAssessment th { background: #f0f0f0; font-weight: bold; }
+  #printableAssessment .pa-checkbox { width: 30px; text-align: center; font-size: 14px; }
+  #printableAssessment .pa-summary { margin-top: 14px; border-top: 2px solid #000; padding-top: 10px; font-size: 13px; }
+  #printableAssessment .pa-line { border-bottom: 1px solid #000; display: inline-block; min-width: 260px; height: 16px; }
 </style>
 </head>
 <body>
@@ -189,8 +234,16 @@
     <button class="mode-btn" id="btnTest" onclick="setMode('test')">Test Mode</button>
   </div>
 
+  <!-- Lesson Title: feeds automatically into the Assessment Spreadsheet, PDF report, and any future reports -->
+  <input type="text" id="lessonTitle" placeholder="Lesson Title (e.g. The Nose Jewel - Unit 1)">
+
   <textarea id="paragraphInput" placeholder="Paste or type a paragraph here..."></textarea>
   <button class="primary-btn" id="analyzeBtn" onclick="analyzeParagraph()">Sort Words</button>
+  <div class="action-row" id="assessmentButtonsTop" style="display:none;">
+    <button class="btn-xlsx" onclick="generateSpreadsheet()">📊 Download Excel</button>
+    <button class="btn-print" onclick="printAssessmentSheet()">🖨 Print Assessment Sheet</button>
+    <button class="btn-pdf-assessment" onclick="generatePDFAssessment()">📄 Download PDF Assessment</button>
+  </div>
 
   <div id="nameSection">
     <input type="text" id="studentName" placeholder="Enter your name to start the test">
@@ -235,6 +288,9 @@
     englishteacherhub.blogspot.com
   </footer>
 
+  <!-- Populated dynamically by printAssessmentSheet(); hidden on screen, shown only via @media print -->
+  <div id="printableAssessment"></div>
+
 </div>
 
 <script>
@@ -252,6 +308,13 @@
   var testResults = [];
   var studentNameValue = "";
   var recognition = null;
+
+  // Reads the Lesson Title input once, reused by the PDF report, the Assessment
+  // Spreadsheet, and any future report generators (per app-wide requirement).
+  function getLessonTitle() {
+    var el = document.getElementById('lessonTitle');
+    return el ? el.value.trim() : '';
+  }
 
   window.setMode = function(mode) {
     currentMode = mode;
@@ -287,6 +350,10 @@
       if (!wordGroups[len]) wordGroups[len] = [];
       if (wordGroups[len].indexOf(words[i]) === -1) wordGroups[len].push(words[i]);
     }
+
+    // Reveal the assessment button group now that words are ready -
+    // available in both Practice and Test mode, no need to finish a test first.
+    document.getElementById('assessmentButtonsTop').style.display = 'flex';
 
     if (currentMode === 'practice') {
       renderPractice();
@@ -456,16 +523,18 @@
 
     doc.setFontSize(11);
     doc.setTextColor(0, 0, 0);
-    doc.text('Student Name: ' + studentNameValue, 15, 32);
-    doc.text('Date: ' + new Date().toLocaleDateString(), 15, 39);
-    doc.text('Score: ' + starCountValue + ' / ' + total, 15, 46);
-    doc.text('Reading Level: ' + level, 15, 53);
+    var lessonTitleValue = getLessonTitle();
+    doc.text('Lesson Title: ' + (lessonTitleValue || '-'), 15, 32);
+    doc.text('Student Name: ' + studentNameValue, 15, 39);
+    doc.text('Date: ' + new Date().toLocaleDateString(), 15, 46);
+    doc.text('Score: ' + starCountValue + ' / ' + total, 15, 53);
+    doc.text('Reading Level: ' + level, 15, 60);
 
     doc.setFontSize(13);
     doc.setTextColor(27, 42, 74);
-    doc.text('Word-by-word Results:', 15, 65);
+    doc.text('Word-by-word Results:', 15, 72);
 
-    var y = 73;
+    var y = 80;
     doc.setFontSize(10);
     for (var i = 0; i < testResults.length; i++) {
       var r = testResults[i];
@@ -488,6 +557,309 @@
     doc.text('T.S. Ramachandran, ELT, GHSS Erasakkanayakanur, Theni District', 15, 290);
 
     doc.save(studentNameValue + '_Reading_Report.pdf');
+  };
+
+  // ===== SHARED ASSESSMENT DATA BUILDER =====
+  // Reused by the Excel, Print, and PDF Assessment generators so the word
+  // list is only sorted/de-duplicated once (single source of truth).
+  function buildAssessmentData() {
+    var lengths = Object.keys(wordGroups).map(Number).sort(function(a, b) { return a - b; });
+    var groupsSorted = {};
+    var totalUnique = 0;
+    for (var i = 0; i < lengths.length; i++) {
+      var len = lengths[i];
+      groupsSorted[len] = wordGroups[len].slice().sort(function(a, b) {
+        return a.toLowerCase().localeCompare(b.toLowerCase());
+      });
+      totalUnique += groupsSorted[len].length;
+    }
+    return {
+      lengths: lengths,
+      groups: groupsSorted,
+      totalUnique: totalUnique,
+      lessonTitle: getLessonTitle(),
+      studentName: studentNameValue
+    };
+  }
+
+  // ===== ASSESSMENT SPREADSHEET (SheetJS / .xlsx) =====
+  // Builds an offline, print-friendly (A4 portrait) checklist spreadsheet:
+  // words de-duplicated, punctuation-free, grouped by letter-count, and
+  // alphabetised within each group. Each group gets its own ✓ | Word | Remarks
+  // mini-table (single checkbox per word) instead of a flat list.
+  window.generateSpreadsheet = function() {
+    if (!wordGroups || Object.keys(wordGroups).length === 0) {
+      alert('Please click "Sort Words" first so the words can be analysed.');
+      return;
+    }
+    if (typeof XLSX === 'undefined') {
+      alert('Spreadsheet library did not load. Please check your internet connection and try again.');
+      return;
+    }
+
+    var data = buildAssessmentData();
+
+    // aoa = "array of arrays" -> one array per spreadsheet row, 3 columns:
+    // A = checkbox, B = Word, C = Remarks
+    var aoa = [];
+    var merges = [];    // merged cell ranges
+    var boldRows = [];  // bold row indices (0-based)
+    var greyRows = [];  // grey-filled section-heading rows
+    var tableHeaderRows = []; // light-grey "✓ | Word | Remarks" header rows
+
+    // Push a row spanning all 3 columns (A:C), optionally bold/grey (section heading)
+    function addFullRow(text, bold, grey) {
+      var r = aoa.length;
+      aoa.push([text, '', '']);
+      merges.push({ s: { r: r, c: 0 }, e: { r: r, c: 2 } });
+      if (bold) boldRows.push(r);
+      if (grey) greyRows.push(r);
+    }
+
+    // Push a label + blank-answer row (label spans A:B, answer sits in C)
+    function addLabelRow(label, value) {
+      var r = aoa.length;
+      aoa.push([label, '', value || '']);
+      merges.push({ s: { r: r, c: 0 }, e: { r: r, c: 1 } });
+    }
+
+    // Push the mini table header row: ✓ | Word | Remarks
+    function addTableHeader() {
+      var r = aoa.length;
+      aoa.push(['\u2713', 'Word', 'Remarks']);
+      tableHeaderRows.push(r);
+    }
+
+    // ---- Title block (merged across A:C as requested) ----
+    addFullRow('ENGLISH TEACHERS HUB', true);
+    addFullRow('WORD READING ASSESSMENT', true);
+    aoa.push(['', '', '']);
+
+    // ---- Lesson / student / school details (rows 4-10, kept visible via freeze panes) ----
+    addLabelRow('Lesson Title :', data.lessonTitle);
+    addLabelRow('Student Name :', data.studentName);
+    addLabelRow('Class :', '');
+    addLabelRow('Section :', '');
+    addLabelRow('School :', '');
+    addLabelRow('Date :', '');
+    addLabelRow('Teacher :', '');
+    aoa.push(['', '', '']);
+
+    // ---- Word checklist: one ✓ | Word | Remarks table per letter-length group ----
+    for (var i = 0; i < data.lengths.length; i++) {
+      var len = data.lengths[i];
+      var group = data.groups[len];
+
+      addFullRow(len + ' LETTER WORDS', true, true);
+      addTableHeader();
+      for (var j = 0; j < group.length; j++) {
+        aoa.push(['\u2610', group[j], '']); // \u2610 = ☐ checkbox glyph, own column
+      }
+      aoa.push(['', '', '']); // spacer between groups
+    }
+
+    // ---- Summary box ----
+    addFullRow('SUMMARY', true, true);
+    addLabelRow('Total Unique Words :', String(data.totalUnique));
+    addLabelRow('Words Read Correctly :', '');
+    addLabelRow('Reading Accuracy (%) :', '');
+    aoa.push(['', '', '']);
+    addFullRow('Teacher Remarks :', true);
+    aoa.push(['', '', '']);
+    aoa.push(['', '', '']);
+    aoa.push(['', '', '']);
+    addLabelRow('Teacher Signature :', '');
+    aoa.push(['', '', '']);
+
+    // ---- Build the worksheet ----
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!merges'] = merges;
+
+    // Column widths - comfortable for A4 portrait printing
+    ws['!cols'] = [{ wch: 8 }, { wch: 26 }, { wch: 22 }];
+
+    // Row heights - comfortable, slightly taller for section headings
+    ws['!rows'] = aoa.map(function(_, idx) {
+      return { hpt: greyRows.indexOf(idx) !== -1 ? 20 : 17 };
+    });
+
+    // ---- Styling: dark blue title, grey section/table headers, thin borders,
+    // bold headings only - no bright colours (best-effort; see note below) ----
+    var thinBorder = { style: 'thin', color: { rgb: '000000' } };
+    var borderAll = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+    Object.keys(ws).forEach(function(cellRef) {
+      if (cellRef[0] === '!') return;
+      ws[cellRef].s = ws[cellRef].s || {};
+      ws[cellRef].s.border = borderAll;
+      ws[cellRef].s.alignment = { vertical: 'center', horizontal: 'left', wrapText: true };
+    });
+    // Centre the checkbox column
+    for (var rr = 0; rr < aoa.length; rr++) {
+      var checkRef = 'A' + (rr + 1);
+      if (ws[checkRef] && (ws[checkRef].v === '\u2610' || ws[checkRef].v === '\u2713')) {
+        ws[checkRef].s.alignment.horizontal = 'center';
+      }
+    }
+    boldRows.forEach(function(r) {
+      ['A', 'B', 'C'].forEach(function(col) {
+        var ref = col + (r + 1);
+        if (ws[ref]) ws[ref].s.font = { bold: true, color: { rgb: r < 2 ? '1B2A4A' : '000000' } };
+      });
+    });
+    greyRows.forEach(function(r) {
+      ['A', 'B', 'C'].forEach(function(col) {
+        var ref = col + (r + 1);
+        if (ws[ref]) ws[ref].s.fill = { fgColor: { rgb: 'D9D9D9' } };
+      });
+    });
+    tableHeaderRows.forEach(function(r) {
+      ['A', 'B', 'C'].forEach(function(col) {
+        var ref = col + (r + 1);
+        if (ws[ref]) {
+          ws[ref].s.fill = { fgColor: { rgb: 'F0F0F0' } };
+          ws[ref].s.font = { bold: true };
+        }
+      });
+    });
+
+    // ---- Print setup: Portrait, A4, centred horizontally, narrow margins ----
+    ws['!margins'] = { left: 0.25, right: 0.25, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
+    ws['!pageSetup'] = { orientation: 'portrait', paperSize: 9, fitToWidth: 1, fitToHeight: 0 };
+    ws['!printOptions'] = { horizontalCentered: true, gridLines: false };
+
+    // ---- Freeze the first 10 rows so student details stay visible while scrolling ----
+    ws['!freeze'] = { xSplit: 0, ySplit: 10, topLeftCell: 'A11', activePane: 'bottomLeft', state: 'frozen' };
+
+    // ---- Assemble workbook ----
+    var wbOut = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbOut, ws, 'Assessment');
+
+    // Repeat the title rows (1-2) at the top of every printed page
+    wbOut.Workbook = wbOut.Workbook || {};
+    wbOut.Workbook.Names = wbOut.Workbook.Names || [];
+    wbOut.Workbook.Names.push({ Name: '_xlnm.Print_Titles', Sheet: 0, Ref: "'Assessment'!$1:$2" });
+
+    var safeLesson = (data.lessonTitle || 'Lesson').replace(/[^a-zA-Z0-9]+/g, '_');
+    var safeName = (data.studentName || 'Student').replace(/[^a-zA-Z0-9]+/g, '_');
+    XLSX.writeFile(wbOut, safeLesson + '_' + safeName + '_Word_Assessment.xlsx');
+  };
+
+  // ===== PRINT ASSESSMENT SHEET (browser print, no download) =====
+  // Builds the same checklist as plain HTML inside #printableAssessment and
+  // triggers window.print(); CSS @media print rules hide everything else.
+  window.printAssessmentSheet = function() {
+    if (!wordGroups || Object.keys(wordGroups).length === 0) {
+      alert('Please click "Sort Words" first so the words can be analysed.');
+      return;
+    }
+    var data = buildAssessmentData();
+    var html = '';
+    html += '<h2>ENGLISH TEACHERS HUB</h2>';
+    html += '<h2 style="font-size:14px;">WORD READING ASSESSMENT</h2>';
+    html += '<div class="pa-field">Lesson Title : <span>' + (data.lessonTitle || '') + '</span></div>';
+    html += '<div class="pa-field">Student Name : <span>' + (data.studentName || '') + '</span></div>';
+    html += '<div class="pa-field">Class : <span style="min-width:100px;"></span>&nbsp;&nbsp;Section : <span style="min-width:100px;"></span></div>';
+    html += '<div class="pa-field">School : <span></span></div>';
+    html += '<div class="pa-field">Date : <span style="min-width:100px;"></span>&nbsp;&nbsp;Teacher : <span style="min-width:150px;"></span></div>';
+
+    for (var i = 0; i < data.lengths.length; i++) {
+      var len = data.lengths[i];
+      var group = data.groups[len];
+      html += '<div class="pa-section">' + len + ' LETTER WORDS</div>';
+      html += '<table><thead><tr><th class="pa-checkbox">&#10003;</th><th>Word</th><th>Remarks</th></tr></thead><tbody>';
+      for (var j = 0; j < group.length; j++) {
+        html += '<tr><td class="pa-checkbox">&#9744;</td><td>' + group[j] + '</td><td></td></tr>';
+      }
+      html += '</tbody></table>';
+    }
+
+    html += '<div class="pa-summary">';
+    html += '<div class="pa-field">Total Unique Words : <b>' + data.totalUnique + '</b></div>';
+    html += '<div class="pa-field">Words Read Correctly : <span></span></div>';
+    html += '<div class="pa-field">Reading Accuracy : <span style="min-width:60px;"></span> %</div>';
+    html += '<div class="pa-field" style="margin-top:10px;">Teacher Remarks</div>';
+    html += '<div class="pa-field"><span class="pa-line"></span></div>';
+    html += '<div class="pa-field" style="margin-top:14px;">Teacher Signature</div>';
+    html += '<div class="pa-field"><span class="pa-line"></span></div>';
+    html += '</div>';
+
+    document.getElementById('printableAssessment').innerHTML = html;
+    window.print();
+  };
+
+  // ===== DOWNLOAD PDF ASSESSMENT (jsPDF - same checklist as the Excel/print sheet) =====
+  window.generatePDFAssessment = function() {
+    if (!wordGroups || Object.keys(wordGroups).length === 0) {
+      alert('Please click "Sort Words" first so the words can be analysed.');
+      return;
+    }
+    if (typeof jspdf === 'undefined') {
+      alert('PDF library did not load. Please check your internet connection and try again.');
+      return;
+    }
+    var data = buildAssessmentData();
+    var doc = new jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+    var pageH = 297, marginX = 15, y = 18;
+
+    function ensureSpace(need) {
+      if (y + need > pageH - 15) { doc.addPage(); y = 18; }
+    }
+
+    doc.setFontSize(16);
+    doc.setTextColor(27, 42, 74);
+    doc.text('ENGLISH TEACHERS HUB', 105, y, { align: 'center' }); y += 7;
+    doc.setFontSize(12);
+    doc.text('WORD READING ASSESSMENT', 105, y, { align: 'center' }); y += 10;
+
+    doc.setFontSize(11);
+    doc.setTextColor(0, 0, 0);
+    doc.text('Lesson Title : ' + (data.lessonTitle || '-'), marginX, y); y += 7;
+    doc.text('Student Name : ' + (data.studentName || '-'), marginX, y); y += 7;
+    doc.text('Class : ____________     Section : ____________', marginX, y); y += 7;
+    doc.text('School : _______________________________', marginX, y); y += 7;
+    doc.text('Date : ____________     Teacher : ____________', marginX, y); y += 10;
+
+    for (var i = 0; i < data.lengths.length; i++) {
+      var len = data.lengths[i];
+      var group = data.groups[len];
+      ensureSpace(14);
+      doc.setFillColor(217, 217, 217);
+      doc.rect(marginX, y - 4, 180, 6, 'F');
+      doc.setFontSize(11);
+      doc.setTextColor(27, 42, 74);
+      doc.text(len + ' LETTER WORDS', marginX + 2, y);
+      y += 8;
+
+      doc.setFontSize(10);
+      doc.setTextColor(0, 0, 0);
+      for (var j = 0; j < group.length; j++) {
+        ensureSpace(7);
+        doc.rect(marginX, y - 3.5, 4, 4); // checkbox square
+        doc.text(group[j], marginX + 8, y);
+        y += 6.5;
+      }
+      y += 3;
+    }
+
+    ensureSpace(45);
+    doc.setDrawColor(0, 0, 0);
+    doc.line(marginX, y, marginX + 180, y); y += 8;
+    doc.setFontSize(11);
+    doc.text('Total Unique Words : ' + data.totalUnique, marginX, y); y += 7;
+    doc.text('Words Read Correctly : ____________', marginX, y); y += 7;
+    doc.text('Reading Accuracy : ____________ %', marginX, y); y += 10;
+    doc.text('Teacher Remarks', marginX, y); y += 10;
+    doc.line(marginX, y, marginX + 180, y); y += 14;
+    doc.text('Teacher Signature', marginX, y); y += 10;
+    doc.line(marginX, y, marginX + 90, y);
+
+    doc.setTextColor(120, 120, 120);
+    doc.setFontSize(9);
+    doc.text('T.S. Ramachandran, ELT, GHSS Erasakkanayakanur, Theni District', marginX, pageH - 10);
+
+    var safeLesson = (data.lessonTitle || 'Lesson').replace(/[^a-zA-Z0-9]+/g, '_');
+    var safeName = (data.studentName || 'Student').replace(/[^a-zA-Z0-9]+/g, '_');
+    doc.save(safeLesson + '_' + safeName + '_Assessment.pdf');
   };
 
   window.shareWhatsApp = function() {

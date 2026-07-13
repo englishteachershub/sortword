@@ -214,6 +214,9 @@
     background: #e8e8e8; font-weight: bold; padding: 4px 8px; margin-top: 12px; font-size: 13px;
   }
   #printableAssessment table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  #printableAssessment .pa-word-columns { display: flex; gap: 8px; margin-bottom: 4px; }
+  #printableAssessment .pa-word-col { flex: 1; min-width: 0; }
+  #printableAssessment .pa-word-col table { margin-bottom: 0; }
   #printableAssessment th, #printableAssessment td {
     border: 1px solid #000; padding: 4px 6px; font-size: 12px; text-align: left;
   }
@@ -585,8 +588,10 @@
   // ===== ASSESSMENT SPREADSHEET (SheetJS / .xlsx) =====
   // Builds an offline, print-friendly (A4 portrait) checklist spreadsheet:
   // words de-duplicated, punctuation-free, grouped by letter-count, and
-  // alphabetised within each group. Each group gets its own ✓ | Word | Remarks
-  // mini-table (single checkbox per word) instead of a flat list.
+  // alphabetised within each group. To keep the sheet short (fewer printed
+  // pages), two length-groups are placed SIDE BY SIDE per row-block
+  // (columns A-C for the left group, E-G for the right group, D as a
+  // narrow spacer) instead of stacking every group vertically.
   window.generateSpreadsheet = function() {
     if (!wordGroups || Object.keys(wordGroups).length === 0) {
       alert('Please click "Sort Words" first so the words can be analysed.');
@@ -598,42 +603,35 @@
     }
 
     var data = buildAssessmentData();
+    var LAST_COL = 6; // columns A(0)..G(6): 0-2 = left group, 3 = spacer, 4-6 = right group
 
-    // aoa = "array of arrays" -> one array per spreadsheet row, 3 columns:
-    // A = checkbox, B = Word, C = Remarks
     var aoa = [];
-    var merges = [];    // merged cell ranges
-    var boldRows = [];  // bold row indices (0-based)
-    var greyRows = [];  // grey-filled section-heading rows
-    var tableHeaderRows = []; // light-grey "✓ | Word | Remarks" header rows
+    var merges = [];
+    var boldRows = [];
+    var greyRows = [];
+    var tableHeaderRows = [];
 
-    // Push a row spanning all 3 columns (A:C), optionally bold/grey (section heading)
+    // Push a row spanning the full width (A:G), optionally bold/grey
     function addFullRow(text, bold, grey) {
       var r = aoa.length;
-      aoa.push([text, '', '']);
-      merges.push({ s: { r: r, c: 0 }, e: { r: r, c: 2 } });
+      aoa.push([text, '', '', '', '', '', '']);
+      merges.push({ s: { r: r, c: 0 }, e: { r: r, c: LAST_COL } });
       if (bold) boldRows.push(r);
       if (grey) greyRows.push(r);
     }
 
-    // Push a label + blank-answer row (label spans A:B, answer sits in C)
+    // Push a label + blank-answer row (label spans A:E, answer sits in F:G)
     function addLabelRow(label, value) {
       var r = aoa.length;
-      aoa.push([label, '', value || '']);
-      merges.push({ s: { r: r, c: 0 }, e: { r: r, c: 1 } });
+      aoa.push([label, '', '', '', '', '', value || '']);
+      merges.push({ s: { r: r, c: 0 }, e: { r: r, c: 4 } });
+      merges.push({ s: { r: r, c: 5 }, e: { r: r, c: LAST_COL } });
     }
 
-    // Push the mini table header row: ✓ | Word | Remarks
-    function addTableHeader() {
-      var r = aoa.length;
-      aoa.push(['\u2713', 'Word', 'Remarks']);
-      tableHeaderRows.push(r);
-    }
-
-    // ---- Title block (merged across A:C as requested) ----
+    // ---- Title block ----
     addFullRow('ENGLISH TEACHERS HUB', true);
     addFullRow('WORD READING ASSESSMENT', true);
-    aoa.push(['', '', '']);
+    aoa.push(['', '', '', '', '', '', '']);
 
     // ---- Lesson / student / school details (rows 4-10, kept visible via freeze panes) ----
     addLabelRow('Lesson Title :', data.lessonTitle);
@@ -643,19 +641,41 @@
     addLabelRow('School :', '');
     addLabelRow('Date :', '');
     addLabelRow('Teacher :', '');
-    aoa.push(['', '', '']);
+    aoa.push(['', '', '', '', '', '', '']);
 
-    // ---- Word checklist: one ✓ | Word | Remarks table per letter-length group ----
-    for (var i = 0; i < data.lengths.length; i++) {
-      var len = data.lengths[i];
-      var group = data.groups[len];
+    // ---- Word checklist: TWO letter-length groups per row-block, side by side ----
+    for (var i = 0; i < data.lengths.length; i += 2) {
+      var lenLeft = data.lengths[i];
+      var groupLeft = data.groups[lenLeft];
+      var hasRight = (i + 1) < data.lengths.length;
+      var lenRight = hasRight ? data.lengths[i + 1] : null;
+      var groupRight = hasRight ? data.groups[lenRight] : [];
 
-      addFullRow(len + ' LETTER WORDS', true, true);
-      addTableHeader();
-      for (var j = 0; j < group.length; j++) {
-        aoa.push(['\u2610', group[j], '']); // \u2610 = ☐ checkbox glyph, own column
+      // Section heading row - both groups' headings on the same row
+      var rHead = aoa.length;
+      aoa.push([
+        lenLeft + ' LETTER WORDS', '', '', '',
+        hasRight ? (lenRight + ' LETTER WORDS') : '', '', ''
+      ]);
+      merges.push({ s: { r: rHead, c: 0 }, e: { r: rHead, c: 2 } });
+      if (hasRight) merges.push({ s: { r: rHead, c: 4 }, e: { r: rHead, c: 6 } });
+      boldRows.push(rHead);
+      greyRows.push(rHead);
+
+      // Table header row - ✓ | Word | Remarks, repeated for both blocks
+      var rTH = aoa.length;
+      aoa.push(['\u2713', 'Word', 'Remarks', '', hasRight ? '\u2713' : '', hasRight ? 'Word' : '', hasRight ? 'Remarks' : '']);
+      tableHeaderRows.push(rTH);
+
+      // Word rows - left group and right group fill in parallel
+      var maxRows = Math.max(groupLeft.length, groupRight.length);
+      for (var k = 0; k < maxRows; k++) {
+        var row = ['', '', '', '', '', '', ''];
+        if (k < groupLeft.length) { row[0] = '\u2610'; row[1] = groupLeft[k]; row[2] = ''; }
+        if (k < groupRight.length) { row[4] = '\u2610'; row[5] = groupRight[k]; row[6] = ''; }
+        aoa.push(row);
       }
-      aoa.push(['', '', '']); // spacer between groups
+      aoa.push(['', '', '', '', '', '', '']); // spacer between row-blocks
     }
 
     // ---- Summary box ----
@@ -663,57 +683,65 @@
     addLabelRow('Total Unique Words :', String(data.totalUnique));
     addLabelRow('Words Read Correctly :', '');
     addLabelRow('Reading Accuracy (%) :', '');
-    aoa.push(['', '', '']);
+    aoa.push(['', '', '', '', '', '', '']);
     addFullRow('Teacher Remarks :', true);
-    aoa.push(['', '', '']);
-    aoa.push(['', '', '']);
-    aoa.push(['', '', '']);
+    aoa.push(['', '', '', '', '', '', '']);
+    aoa.push(['', '', '', '', '', '', '']);
     addLabelRow('Teacher Signature :', '');
-    aoa.push(['', '', '']);
+    aoa.push(['', '', '', '', '', '', '']);
 
     // ---- Build the worksheet ----
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!merges'] = merges;
 
-    // Column widths - comfortable for A4 portrait printing
-    ws['!cols'] = [{ wch: 8 }, { wch: 26 }, { wch: 22 }];
+    // Column widths - A-C = left group (checkbox/word/remarks), D = spacer, E-G = right group
+    ws['!cols'] = [
+      { wch: 6 }, { wch: 18 }, { wch: 14 }, { wch: 3 },
+      { wch: 6 }, { wch: 18 }, { wch: 14 }
+    ];
 
-    // Row heights - comfortable, slightly taller for section headings
-    ws['!rows'] = aoa.map(function(_, idx) {
-      return { hpt: greyRows.indexOf(idx) !== -1 ? 20 : 17 };
+    // Row heights - compact word rows, taller heading rows, tiny spacer rows
+    ws['!rows'] = aoa.map(function(row, idx) {
+      if (greyRows.indexOf(idx) !== -1) return { hpt: 18 };
+      if (tableHeaderRows.indexOf(idx) !== -1) return { hpt: 15 };
+      var isBlank = row.every(function(v) { return v === ''; });
+      return { hpt: isBlank ? 7 : 15 };
     });
 
     // ---- Styling: dark blue title, grey section/table headers, thin borders,
     // bold headings only - no bright colours (best-effort; see note below) ----
     var thinBorder = { style: 'thin', color: { rgb: '000000' } };
     var borderAll = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+    var CHECK_COLS = ['A', 'E'];
     Object.keys(ws).forEach(function(cellRef) {
       if (cellRef[0] === '!') return;
       ws[cellRef].s = ws[cellRef].s || {};
       ws[cellRef].s.border = borderAll;
       ws[cellRef].s.alignment = { vertical: 'center', horizontal: 'left', wrapText: true };
     });
-    // Centre the checkbox column
+    // Centre both checkbox columns (left block = A, right block = E)
     for (var rr = 0; rr < aoa.length; rr++) {
-      var checkRef = 'A' + (rr + 1);
-      if (ws[checkRef] && (ws[checkRef].v === '\u2610' || ws[checkRef].v === '\u2713')) {
-        ws[checkRef].s.alignment.horizontal = 'center';
-      }
+      CHECK_COLS.forEach(function(col) {
+        var ref = col + (rr + 1);
+        if (ws[ref] && (ws[ref].v === '\u2610' || ws[ref].v === '\u2713')) {
+          ws[ref].s.alignment.horizontal = 'center';
+        }
+      });
     }
     boldRows.forEach(function(r) {
-      ['A', 'B', 'C'].forEach(function(col) {
+      ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(function(col) {
         var ref = col + (r + 1);
         if (ws[ref]) ws[ref].s.font = { bold: true, color: { rgb: r < 2 ? '1B2A4A' : '000000' } };
       });
     });
     greyRows.forEach(function(r) {
-      ['A', 'B', 'C'].forEach(function(col) {
+      ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(function(col) {
         var ref = col + (r + 1);
         if (ws[ref]) ws[ref].s.fill = { fgColor: { rgb: 'D9D9D9' } };
       });
     });
     tableHeaderRows.forEach(function(r) {
-      ['A', 'B', 'C'].forEach(function(col) {
+      ['A', 'B', 'C', 'E', 'F', 'G'].forEach(function(col) {
         var ref = col + (r + 1);
         if (ws[ref]) {
           ws[ref].s.fill = { fgColor: { rgb: 'F0F0F0' } };
@@ -722,9 +750,9 @@
       });
     });
 
-    // ---- Print setup: Portrait, A4, centred horizontally, narrow margins ----
+    // ---- Print setup: Portrait, A4, centred horizontally, narrow margins, fit to page ----
     ws['!margins'] = { left: 0.25, right: 0.25, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
-    ws['!pageSetup'] = { orientation: 'portrait', paperSize: 9, fitToWidth: 1, fitToHeight: 0 };
+    ws['!pageSetup'] = { orientation: 'portrait', paperSize: 9, fitToWidth: 1, fitToHeight: 0, scale: 90 };
     ws['!printOptions'] = { horizontalCentered: true, gridLines: false };
 
     // ---- Freeze the first 10 rows so student details stay visible while scrolling ----
@@ -766,11 +794,28 @@
       var len = data.lengths[i];
       var group = data.groups[len];
       html += '<div class="pa-section">' + len + ' LETTER WORDS</div>';
-      html += '<table><thead><tr><th class="pa-checkbox">&#10003;</th><th>Word</th><th>Remarks</th></tr></thead><tbody>';
-      for (var j = 0; j < group.length; j++) {
-        html += '<tr><td class="pa-checkbox">&#9744;</td><td>' + group[j] + '</td><td></td></tr>';
+
+      // Split the group into two side-by-side columns to use less vertical
+      // space on the printed page (mirrors the Excel/PDF column layout).
+      var half = Math.ceil(group.length / 2);
+      var colA = group.slice(0, half);
+      var colB = group.slice(half);
+
+      function buildWordTable(words) {
+        var t = '<table><thead><tr><th class="pa-checkbox">&#10003;</th><th>Word</th><th>Remarks</th></tr></thead><tbody>';
+        for (var k = 0; k < words.length; k++) {
+          t += '<tr><td class="pa-checkbox">&#9744;</td><td>' + words[k] + '</td><td></td></tr>';
+        }
+        t += '</tbody></table>';
+        return t;
       }
-      html += '</tbody></table>';
+
+      html += '<div class="pa-word-columns">';
+      html += '<div class="pa-word-col">' + buildWordTable(colA) + '</div>';
+      if (colB.length > 0) {
+        html += '<div class="pa-word-col">' + buildWordTable(colB) + '</div>';
+      }
+      html += '</div>';
     }
 
     html += '<div class="pa-summary">';
@@ -788,6 +833,9 @@
   };
 
   // ===== DOWNLOAD PDF ASSESSMENT (jsPDF - same checklist as the Excel/print sheet) =====
+  // Words are laid out in a 3-column grid per length-group (column-major:
+  // fills column 1 top-to-bottom, then column 2, etc.) instead of one word
+  // per line, so a group of 12 words takes 4 rows instead of 12.
   window.generatePDFAssessment = function() {
     if (!wordGroups || Object.keys(wordGroups).length === 0) {
       alert('Please click "Sort Words" first so the words can be analysed.');
@@ -799,7 +847,10 @@
     }
     var data = buildAssessmentData();
     var doc = new jspdf.jsPDF({ unit: 'mm', format: 'a4' });
-    var pageH = 297, marginX = 15, y = 18;
+    var pageH = 297, marginX = 15, contentW = 180, y = 18;
+    var COLS = 3;
+    var colWidth = contentW / COLS;
+    var ROW_H = 6; // vertical space per word line within a column
 
     function ensureSpace(need) {
       if (y + need > pageH - 15) { doc.addPage(); y = 18; }
@@ -822,23 +873,45 @@
     for (var i = 0; i < data.lengths.length; i++) {
       var len = data.lengths[i];
       var group = data.groups[len];
-      ensureSpace(14);
+      var rowsNeeded = Math.ceil(group.length / COLS);
+      var blockHeight = 8 + rowsNeeded * ROW_H + 3;
+
+      // Keep a group's heading + grid together; if the whole group can't
+      // fit on the remaining space of the current page, start a fresh page
+      // (only for groups that CAN fit within one full page).
+      if (blockHeight <= pageH - 33 && y + blockHeight > pageH - 15) {
+        doc.addPage();
+        y = 18;
+      } else {
+        ensureSpace(14);
+      }
+
       doc.setFillColor(217, 217, 217);
-      doc.rect(marginX, y - 4, 180, 6, 'F');
+      doc.rect(marginX, y - 4, contentW, 6, 'F');
       doc.setFontSize(11);
       doc.setTextColor(27, 42, 74);
       doc.text(len + ' LETTER WORDS', marginX + 2, y);
       y += 8;
 
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       doc.setTextColor(0, 0, 0);
+      var groupTop = y;
       for (var j = 0; j < group.length; j++) {
-        ensureSpace(7);
-        doc.rect(marginX, y - 3.5, 4, 4); // checkbox square
-        doc.text(group[j], marginX + 8, y);
-        y += 6.5;
+        var col = Math.floor(j / rowsNeeded);
+        var rowInCol = j % rowsNeeded;
+        var xPos = marginX + col * colWidth;
+        var yPos = groupTop + rowInCol * ROW_H;
+        // If an oversized group still overflows the page, wrap to a new page
+        if (yPos + ROW_H > pageH - 15) {
+          doc.addPage();
+          y = 18;
+          groupTop = y;
+          yPos = groupTop + rowInCol * ROW_H;
+        }
+        doc.rect(xPos, yPos - 3.2, 3.5, 3.5); // checkbox square
+        doc.text(String(group[j]), xPos + 5, yPos);
       }
-      y += 3;
+      y = groupTop + rowsNeeded * ROW_H + 4;
     }
 
     ensureSpace(45);

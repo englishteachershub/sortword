@@ -348,10 +348,17 @@
     }
 
     wordGroups = {};
+    var seenLower = {}; // tracks lower-cased words already added, per length, so
+                         // "The" and "the" (or "Cat"/"cat") are treated as the
+                         // same word instead of showing up as two separate tiles
     for (var i = 0; i < words.length; i++) {
       var len = words[i].length;
+      var lowerKey = len + ':' + words[i].toLowerCase();
       if (!wordGroups[len]) wordGroups[len] = [];
-      if (wordGroups[len].indexOf(words[i]) === -1) wordGroups[len].push(words[i]);
+      if (!seenLower[lowerKey]) {
+        seenLower[lowerKey] = true;
+        wordGroups[len].push(words[i]); // keep the first-seen casing
+      }
     }
 
     // Reveal the assessment button group now that words are ready -
